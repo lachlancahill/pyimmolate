@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pyimmolate"
+version = "0.1.0"
+description = "Pythonic wrapper around the Immolate Balatro seed searcher (Windows only at runtime)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Lachlan Cahill" }]
+dependencies = [
+    "platformdirs>=4.0",
+    "requests>=2.31",
+]
+
+[project.urls]
+Homepage = "https://github.com/SpectralPack/Immolate"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pyimmolate"]

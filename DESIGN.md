@@ -34,15 +34,16 @@ This was chosen over a high-level declarative pattern API because:
 ### Core tools
 
 ```python
-from pyimmolate import filter, helper, run, item_array, int_array, inst
+from pyimmolate import filter, helper, run, item_array, int_array, inst, ref
 ```
 
 - `@filter` — marks a function as a seed filter; triggers transpilation to `.cl`
 - `@helper` — marks an auxiliary function called by the filter; transpiled alongside it
-- `run(filter_fn)` — executes the filter via Immolate, returns a streaming generator of `(seed, score)` tuples
+- `run(filter_fn, *, start_seed=..., num_seeds=..., cutoff=..., thread_groups=..., platform=..., device=...)` — executes the filter via Immolate, returns a streaming generator of raw stdout lines from the binary. All keyword arguments default to values defined in `pyimmolate.constants`.
 - `item_array(n)` — declares a C array of `item` of length `n`
 - `int_array(n)` — declares a C array of `int` of length `n`; accepts an optional initialiser list: `int_array([1, 1, 2, 2, 2])`
 - `inst` — the instance sentinel (see below)
+- `ref(x)` — marks an argument as pass-by-reference at a helper call site (see "Helper functions" below)
 
 ### The `inst` object
 
@@ -109,9 +110,11 @@ def get_soul_index(ante):
     return pack_index
 ```
 
-**Multiple return values (mutable accumulator pattern)** — C uses pointer output params for this; Python uses tuple return instead. The transpiler detects that returned values correspond to input params and emits them as pointer params in C. The caller unpacks the tuple at each call site.
+**Pass-by-reference (mutable accumulator pattern)** — C uses pointer output params for this. In pyimmolate, the caller marks each argument that the helper should mutate with `ref(...)`; the transpiler emits `&x` at the call site and a pointer-typed parameter in the helper. Inside the helper body, the param is used as a normal local — the transpiler rewrites reads and writes to dereference the pointer.
 
 ```python
+from pyimmolate import helper, ref
+
 @helper
 def check_next_item(ante, has_showman, has_showman_ante, has_emperor, has_emperor_ante):
     shop_item = next_shop_item(ante)
@@ -121,16 +124,19 @@ def check_next_item(ante, has_showman, has_showman_ante, has_emperor, has_empero
     if not has_emperor and shop_item.value == The_Emperor:
         has_emperor = True
         has_emperor_ante = ante
-    return has_showman, has_showman_ante, has_emperor, has_emperor_ante
 
-# Call site — unpack every iteration:
+# Call site — only the args that should be mutated are wrapped in ref():
 for i in range(6):
-    has_showman, has_showman_ante, has_emperor, has_emperor_ante = check_next_item(
-        ante, has_showman, has_showman_ante, has_emperor, has_emperor_ante
+    check_next_item(
+        ante,
+        ref(has_showman), ref(has_showman_ante),
+        ref(has_emperor), ref(has_emperor_ante),
     )
 ```
 
-This is verbose for many output params. For helpers that are too complex to express this way, use the raw `.cl` escape hatch (see below).
+The `ref()` marker is purely a syntactic signal to the transpiler; it has no Python runtime effect (filter/helper bodies are never executed as Python). A given parameter must be referenced consistently across all call sites — either always with `ref()` or never. Mixing the two for the same parameter is an error.
+
+For helpers whose mutation pattern cannot be expressed via `ref()` (e.g. mutating compound literals or OpenCL-specific constructs), use the raw `.cl` escape hatch (see below).
 
 **`void` helpers (side-effects only)** — a helper with no `return` statement transpiles to a `void` C function:
 
@@ -142,7 +148,7 @@ def burn_pack(ante):
 
 ### Raw `.cl` escape hatch
 
-For logic that cannot be expressed in the Python DSL — primarily helpers using OpenCL-specific constructs like `__private` compound literals — raw C can be injected via `raw_helpers`:
+For logic that cannot be expressed in the Python DSL — primarily helpers using OpenCL-specific constructs like `__private` compound literals — raw C can be injected via `raw_helpers`. **Convention:** every raw helper must take `instance* inst` as its first parameter; the transpiler auto-injects `inst` at every call site (matching the rest of Immolate's API). If a particular raw helper does not need `inst`, it can simply ignore the argument.
 
 ```python
 @filter(raw_helpers="""
@@ -162,6 +168,17 @@ def buggy_erratic():
 ## Import Structure
 
 All constants and API functions are available via explicit imports. `import *` is never used. Submodules are organised by Balatro game concept so imports are self-documenting.
+
+### Generated, not hand-maintained
+
+The constant submodules (`pyimmolate/jokers.py`, `pyimmolate/tarots.py`, etc.) and the API signature table (`pyimmolate/_api_signatures.py`) are **generated** from the upstream Immolate source by `scripts/generate_constants.py`. The script:
+
+1. Reads `IMMOLATE_VERSION` from `pyimmolate/constants.py`.
+2. Fetches `lib/immolate.cl` and any related headers from that tag of the upstream `SpectralPack/Immolate` repository.
+3. Parses C enums (`item`, `tag`, `voucher`, `deck`, `stake`, `rsrc`, `Edition`, `Enhancement`, `Seal`, `BossBlind`, `PokerHand`, `ItemType`, etc.) and emits one static `.py` file per concept group, each declaring its constants as plain integer-typed module-level names.
+4. Parses C function declarations and emits `_api_signatures.py` containing every API function's parameter types and return type, used by the transpiler to drive `inst` injection and return-type inference.
+
+The generated `.py` files are committed to the repo so users get full IDE autocomplete and "unknown name" errors without any runtime introspection. When Immolate releases a new version, bumping `IMMOLATE_VERSION` and re-running the generator keeps everything in sync. This avoids hand-typing several hundred constants (and the inevitable typos) while keeping the runtime API fully static.
 
 ```python
 from pyimmolate import filter, run, item_array, int_array, helper, inst  # core tools
@@ -346,10 +363,10 @@ def max_cash_ante_1():
     ...
 ```
 
-### Helpers with multiple return values — `showman_emperor_fool.cl` pattern
+### Helpers with pass-by-reference — `showman_emperor_fool.cl` pattern
 
 ```python
-from pyimmolate import filter, helper, run
+from pyimmolate import filter, helper, run, ref
 from pyimmolate.api import next_shop_item
 from pyimmolate.jokers import Showman
 from pyimmolate.tarots import The_Emperor
@@ -363,7 +380,6 @@ def check_next_item(ante, has_showman, has_showman_ante, has_emperor, has_empero
     if not has_emperor and shop_item.value == The_Emperor:
         has_emperor = True
         has_emperor_ante = ante
-    return has_showman, has_showman_ante, has_emperor, has_emperor_ante
 
 @filter
 def showman_emperor_fool():
@@ -375,8 +391,10 @@ def showman_emperor_fool():
     while ante <= 5:
         i = 0
         while i < 6:
-            has_showman, has_showman_ante, has_emperor, has_emperor_ante = check_next_item(
-                ante, has_showman, has_showman_ante, has_emperor, has_emperor_ante
+            check_next_item(
+                ante,
+                ref(has_showman), ref(has_showman_ante),
+                ref(has_emperor), ref(has_emperor_ante),
             )
             i += 1
         ante += 1
@@ -393,7 +411,7 @@ Users are writing Python that is transpiled to OpenCL C. This means:
 - **No classes, generators, list comprehensions, or dynamic typing tricks.** Only C-compatible constructs: loops, conditionals, arithmetic, function calls, array indexing.
 - **Arrays must be declared explicitly** with `item_array(n)` or `int_array(n)`. Type inference cannot determine array types or sizes.
 - **Manual counter increment before `continue`** when using a `while` loop as a counting loop.
-- **Mutable accumulator helpers are verbose** — each call site must unpack and pass back the full state tuple.
+- **Mutated arguments must be marked at every call site** with `ref(...)`. A parameter must be referenced consistently — every call site or none.
 - **OpenCL-specific constructs** (`__private` compound literals, SIMD vector operations) cannot be expressed in the Python DSL and require the raw `.cl` escape hatch.
 - **Windows only at runtime.** Immolate is a Windows binary. The Python package can be developed on any platform, but filters can only be executed on Windows.
 
@@ -407,11 +425,11 @@ Set up `pyproject.toml` for PyPI, package structure (`pyimmolate/`), and a `down
 ### Step 2 — OpenCL C code generator
 A `codegen` module that takes a Python function's AST and emits a valid `.cl` filter file. This covers: variable declarations (type-inferred or array-constructed), while/for loops, if/elif/else, break/continue, return, arithmetic and logical operators, array indexing, struct field access (including `inst.*`), function calls, and tuple return → pointer param conversion for helpers. The transpiler maintains a full Immolate API signature table (argument types, return types) to drive inference and `inst` injection.
 
-### Step 3 — Immolate API surface + constants
-Define all Immolate API functions as typed stubs (for IDE autocomplete and transpiler lookup) and all item/source/deck/stake/etc. constants in their respective submodules. Define the `inst` sentinel as a typed object with the correct field structure (`locked`, `params`, `hashed_seed`). These stubs are never executed as Python — they exist to give the user a fully inspectable, type-checkable API.
+### Step 3 — Immolate API surface + constants (generated)
+Implement `scripts/generate_constants.py`, which fetches `lib/immolate.cl` and related headers from the pinned upstream tag, parses enums and function declarations, and writes static `.py` files: one per constant group (`jokers.py`, `tarots.py`, `vouchers.py`, …), plus `_api_signatures.py` containing the API function table used by the transpiler. Define the `inst` sentinel as a hand-written typed object with the correct field structure (`locked`, `params`, `hashed_seed`). The generated stubs are never executed as Python — they exist to give the user a fully inspectable, type-checkable API and to drive the transpiler.
 
 ### Step 4 — Subprocess runner + output streaming
-A `runner` module that writes the generated `.cl` to a temp file, invokes the Immolate binary as a subprocess with appropriate flags, and streams stdout line-by-line back to the caller as a generator of `(seed, score)` tuples.
+A `runner` module that writes the generated `.cl` into the cached Immolate install's `filters/` directory, invokes the Immolate binary as a subprocess with the appropriate flags (assembled from `run()`'s keyword arguments and the defaults in `constants.py`), and streams stdout line-by-line back to the caller as a generator of raw strings. Output parsing into structured `(seed, score)` tuples is deferred until the on-Windows format is verified.
 
 ### Step 5 — Integration, examples, and packaging
 Wire everything into a clean public API, port several example filters as Python equivalents to validate the design end-to-end, and finalise packaging for `pip install pyimmolate`. The ported examples serve as both integration tests and documentation for users.
