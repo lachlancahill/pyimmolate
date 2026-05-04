@@ -539,24 +539,28 @@ class Transpiler:
             return f"{base}[{idx}]"
         if isinstance(node, ast.UnaryOp):
             op = _UNARYOP[type(node.op)]
-            return f"{op}({self._emit_expr(node.operand, scope)})"
+            inner = self._emit_expr(node.operand, scope)
+            # Skip redundant double-parens for already-grouped operands.
+            if isinstance(node.operand, (ast.Name, ast.Constant, ast.Attribute, ast.Subscript, ast.Call)):
+                return f"{op}{inner}"
+            return f"{op}({inner})"
         if isinstance(node, ast.BinOp):
-            l = self._emit_expr(node.left, scope)
-            r = self._emit_expr(node.right, scope)
+            l = self._wrap_if_needed(node.left, scope, parent="binop")
+            r = self._wrap_if_needed(node.right, scope, parent="binop")
             op = _BINOP[type(node.op)]
-            return f"({l} {op} {r})"
+            return f"{l} {op} {r}"
         if isinstance(node, ast.BoolOp):
             op = _BOOLOP[type(node.op)]
-            parts = [self._emit_expr(v, scope) for v in node.values]
-            return "(" + f" {op} ".join(parts) + ")"
+            parts = [self._wrap_if_needed(v, scope, parent="boolop") for v in node.values]
+            return f" {op} ".join(parts)
         if isinstance(node, ast.Compare):
+            left = self._wrap_if_needed(node.left, scope, parent="compare")
             parts: list[str] = []
-            left = self._emit_expr(node.left, scope)
             cur_left = left
             for op_node, right in zip(node.ops, node.comparators):
-                cur_right = self._emit_expr(right, scope)
+                cur_right = self._wrap_if_needed(right, scope, parent="compare")
                 op = _CMPOP[type(op_node)]
-                parts.append(f"({cur_left} {op} {cur_right})")
+                parts.append(f"{cur_left} {op} {cur_right}")
                 cur_left = cur_right
             return " && ".join(parts) if len(parts) > 1 else parts[0]
         if isinstance(node, ast.Call):
@@ -569,6 +573,35 @@ class Transpiler:
         if isinstance(node, ast.NameConstant):  # py<3.8 compat (no-op for 3.10+)
             return "true" if node.value else "false"
         raise SyntaxError(f"Unsupported expression: {ast.dump(node)}")
+
+    def _wrap_if_needed(self, node: ast.expr, scope: Scope, *, parent: str) -> str:
+        """Emit `node`, parenthesising only when C precedence requires it.
+
+        `parent` is the kind of expression containing this one. Lower-precedence
+        children (e.g. a BoolOp inside a BinOp) need parens; higher-precedence
+        children (e.g. a Name inside any operator) don't.
+        """
+        s = self._emit_expr(node, scope)
+        # In C: ?: < || < && < |/^/& < ==/!= < </> < <</>>  < +/- < *///%  < unary
+        if parent == "binop":
+            # BinOp children must be parens'd if they themselves are looser-binding:
+            # BoolOp (||/&&), Compare (==/<), or another BinOp at risk.
+            if isinstance(node, (ast.BoolOp, ast.Compare, ast.IfExp)):
+                return f"({s})"
+            if isinstance(node, ast.BinOp):
+                # Same-class precedence: parenthesise to be safe.
+                return f"({s})"
+            return s
+        if parent == "compare":
+            if isinstance(node, (ast.BoolOp, ast.Compare, ast.IfExp)):
+                return f"({s})"
+            return s
+        if parent == "boolop":
+            if isinstance(node, ast.IfExp):
+                return f"({s})"
+            # Compare and BinOp bind tighter than &&/|| in C; no parens needed.
+            return s
+        return s
 
     @staticmethod
     def _slice_value(s: ast.AST) -> ast.expr:
@@ -787,7 +820,7 @@ class Transpiler:
         else:
             raise SyntaxError("range() takes 1-3 arguments")
 
-        loop_scope = Scope(declared={**scope.declared, var: "long"}, ref_params=set(scope.ref_params))
+        loop_scope = Scope(declared={**scope.declared, var: "int"}, ref_params=set(scope.ref_params))
         if dry_run:
             self._emit_block(stmt.body, loop_scope, indent + 1, dry_run=True)
             return ""
@@ -798,7 +831,7 @@ class Transpiler:
             else f"{var} += {step}"
         )
         return (
-            f"{ind}for (long {var} = {start}; {var} < {stop}; {step_clause}) {{\n"
+            f"{ind}for (int {var} = {start}; {var} < {stop}; {step_clause}) {{\n"
             f"{body.rstrip(chr(10))}\n{ind}}}"
         )
 

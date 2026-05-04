@@ -31,5 +31,5 @@ def double_legendary():
 
 
 if __name__ == "__main__":
-    for line in run(double_legendary):
-        print(line)
+    for seed, score in run(double_legendary):
+        print(f"{seed}\t{score}")

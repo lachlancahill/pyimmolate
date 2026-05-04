@@ -16,5 +16,5 @@ def buggy_erratic():
 
 
 if __name__ == "__main__":
-    for line in run(buggy_erratic):
-        print(line)
+    for seed, score in run(buggy_erratic):
+        print(f"{seed}	{score}")

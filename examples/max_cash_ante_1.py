@@ -95,5 +95,5 @@ def max_cash_ante_1():
 
 
 if __name__ == "__main__":
-    for line in run(max_cash_ante_1):
-        print(line)
+    for seed, score in run(max_cash_ante_1):
+        print(f"{seed}	{score}")

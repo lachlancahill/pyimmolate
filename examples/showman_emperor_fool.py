@@ -94,5 +94,5 @@ def showman_emperor_fool():
 
 
 if __name__ == "__main__":
-    for line in run(showman_emperor_fool):
-        print(line)
+    for seed, score in run(showman_emperor_fool):
+        print(f"{seed}	{score}")

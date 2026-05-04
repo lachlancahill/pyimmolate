@@ -28,5 +28,5 @@ def emperor_fool():
 
 
 if __name__ == "__main__":
-    for line in run(emperor_fool):
-        print(line)
+    for seed, score in run(emperor_fool):
+        print(f"{seed}	{score}")

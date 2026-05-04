@@ -51,5 +51,5 @@ def perkeo_observatory():
 
 
 if __name__ == "__main__":
-    for line in run(perkeo_observatory):
-        print(line)
+    for seed, score in run(perkeo_observatory):
+        print(f"{seed}	{score}")
