@@ -83,20 +83,29 @@ def run_raw(
         # accounts for that, so this should only fire on real misconfiguration.
         raise RuntimeError(f"Immolate binary not found at {binary}")
 
-    cmd: list[str] = [
-        str(binary),
-        "-f", filter_name,
-        "-s", start_seed if start_seed is not None else constants.DEFAULT_START_SEED,
-        "-n", str(num_seeds if num_seeds is not None else constants.DEFAULT_NUM_SEEDS),
-        "-c", str(cutoff if cutoff is not None else constants.DEFAULT_CUTOFF),
-        "-g", str(thread_groups if thread_groups is not None else constants.DEFAULT_THREAD_GROUPS),
-    ]
-    p = platform if platform is not None else constants.DEFAULT_PLATFORM
-    d = device if device is not None else constants.DEFAULT_DEVICE
-    if p is not None:
-        cmd.extend(["-p", str(p)])
-    if d is not None:
-        cmd.extend(["-d", str(d)])
+    # Each kwarg falls back to its DEFAULT_* in constants.py; if that's also None,
+    # we omit the flag so Immolate uses its own built-in default (e.g. -n defaults
+    # to the full seed pool).
+    s_val = start_seed if start_seed is not None else constants.DEFAULT_START_SEED
+    n_val = num_seeds if num_seeds is not None else constants.DEFAULT_NUM_SEEDS
+    c_val = cutoff if cutoff is not None else constants.DEFAULT_CUTOFF
+    g_val = thread_groups if thread_groups is not None else constants.DEFAULT_THREAD_GROUPS
+    p_val = platform if platform is not None else constants.DEFAULT_PLATFORM
+    d_val = device if device is not None else constants.DEFAULT_DEVICE
+
+    cmd: list[str] = [str(binary), "-f", filter_name]
+    if s_val is not None:
+        cmd.extend(["-s", str(s_val)])
+    if n_val is not None:
+        cmd.extend(["-n", str(n_val)])
+    if c_val is not None:
+        cmd.extend(["-c", str(c_val)])
+    if g_val is not None:
+        cmd.extend(["-g", str(g_val)])
+    if p_val is not None:
+        cmd.extend(["-p", str(p_val)])
+    if d_val is not None:
+        cmd.extend(["-d", str(d_val)])
 
     proc = subprocess.Popen(
         cmd,

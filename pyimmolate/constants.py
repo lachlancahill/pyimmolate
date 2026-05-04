@@ -22,10 +22,13 @@ CACHE_ROOT: Path = user_cache_path("pyimmolate", "pyimmolate")
 INSTALL_DIR: Path = CACHE_ROOT / IMMOLATE_VERSION
 BINARY_NAME = "immolate.exe"
 
-DEFAULT_START_SEED = "11111111"
-DEFAULT_NUM_SEEDS = 1_000_000
-DEFAULT_CUTOFF = 1
-DEFAULT_THREAD_GROUPS = 16
+# All `None` defaults below mean "don't pass the flag — use Immolate's own default".
+# Immolate's own defaults: -s empty (start of seed space), -n full seed pool
+# (2,318,107,019,761), -c 1, -g 16, -p 0, -d 0. Override per-call via kwargs to run().
+DEFAULT_START_SEED: str | None = None
+DEFAULT_NUM_SEEDS: int | None = None
+DEFAULT_CUTOFF: int | None = None
+DEFAULT_THREAD_GROUPS: int | None = None
 DEFAULT_PLATFORM: int | None = None
 DEFAULT_DEVICE: int | None = None
 
