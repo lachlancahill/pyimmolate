@@ -1,5 +1,11 @@
 """Find seeds with Half Joker in ante 1's shop, Blueprint in ante 3's shop,
-and Hologram in ante 5's shop. Each ante's shop is scanned for its first 6 items.
+and Hologram in ante 5's shop.
+
+Each ante's shop has its first N items scanned. The visible-in-game shop only
+shows two items at a time — slots 3-4 require one reroll, 5-6 require two.
+Pick SHOP_ITEMS_TO_CHECK based on how many rerolls you're willing to do:
+  2 -> only the items immediately visible (matches `cavendish.cl` upstream).
+  6 -> items reachable within two rerolls.
 
 Returns 1 for a match, 0 otherwise.
 """
@@ -8,7 +14,7 @@ from pyimmolate import filter, run
 from pyimmolate.api import init_locks, next_shop_item
 from pyimmolate.jokers import Blueprint, Half_Joker, Hologram
 
-SHOP_ITEMS_TO_CHECK = 6
+SHOP_ITEMS_TO_CHECK = 2
 
 
 @filter

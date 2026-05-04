@@ -4,8 +4,14 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import Iterator
+
+
+def _log(msg: str) -> None:
+    """Write a status line to stderr so it never gets confused with seed output."""
+    print(f"[pyimmolate] {msg}", file=sys.stderr, flush=True)
 
 from pyimmolate import constants
 from pyimmolate._core import FilterFunction
@@ -69,6 +75,7 @@ def run_raw(
             f"{type(filter_fn).__name__}"
         )
 
+    _log(f"ensuring Immolate {constants.IMMOLATE_VERSION} is installed…")
     install = install_path()
     name, cl_source = generate_cl(filter_fn)
     filter_name = constants.GENERATED_FILTER_PREFIX + name
@@ -76,6 +83,7 @@ def run_raw(
     filters_dir.mkdir(parents=True, exist_ok=True)
     cl_path = filters_dir / f"{filter_name}.cl"
     cl_path.write_text(cl_source)
+    _log(f"wrote {cl_path}")
 
     binary = install / constants.BINARY_NAME
     if not binary.exists():
@@ -107,6 +115,13 @@ def run_raw(
     if d_val is not None:
         cmd.extend(["-d", str(d_val)])
 
+    _log(f"launching: {' '.join(cmd)}")
+    _log(
+        "note: Immolate's own stdout is block-buffered when piped, so its "
+        "build banner ('Immolate Beta…', 'Building program…') and seed lines "
+        "may arrive out of order or in batches. The kernel is running normally."
+    )
+
     proc = subprocess.Popen(
         cmd,
         cwd=install,
@@ -120,5 +135,6 @@ def run_raw(
     for line in proc.stdout:
         yield line.rstrip("\n")
     rc = proc.wait()
+    _log(f"immolate exited with status {rc}")
     if rc != 0:
         raise RuntimeError(f"immolate exited with status {rc}")
