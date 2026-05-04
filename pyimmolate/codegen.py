@@ -19,6 +19,8 @@ the AST captured at decoration time.
 from __future__ import annotations
 
 import ast
+import inspect
+import sys
 import textwrap
 from dataclasses import dataclass, field
 from typing import Any
@@ -128,8 +130,37 @@ class Transpiler:
         # Helper FunctionDef AST nodes, keyed by helper name.
         self.helper_asts: dict[str, ast.FunctionDef] = {}
 
+        # Module-level constants defined in the user's filter module (e.g.
+        # `SHOP_ITEMS_TO_CHECK = 6`). Names that come from imports — such as
+        # `Half_Joker` from `pyimmolate.jokers` — are intentionally NOT collected
+        # here, so they survive transpilation as C identifiers for Immolate to
+        # resolve.
+        self.inline_consts: dict[str, int | bool] = self._collect_module_constants()
+
         self._discover_helpers()
         self._parse_helpers()
+
+    def _collect_module_constants(self) -> dict[str, int | bool]:
+        mod = sys.modules.get(self.filt.fn.__module__)
+        if mod is None:
+            return {}
+        src_file = inspect.getsourcefile(mod)
+        if src_file is None:
+            return {}
+        source = open(src_file).read()
+        tree = ast.parse(source)
+        out: dict[str, int | bool] = {}
+        for node in tree.body:
+            if not isinstance(node, ast.Assign):
+                continue
+            if not (len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)):
+                continue
+            if not isinstance(node.value, ast.Constant):
+                continue
+            v = node.value.value
+            if isinstance(v, (int, bool)):
+                out[node.targets[0].id] = v
+        return out
 
     # ──────────────────────────────────────────────────────────────────
     # Helper discovery
@@ -429,7 +460,7 @@ class Transpiler:
         if isinstance(first, ast.List):
             return elem_ty, str(len(first.elts)), list(first.elts)
         # Form 2: <fn>(n) or <fn>(n, [a,b,c])
-        size_expr = self._emit_expr_static(first)
+        size_expr = self._emit_size_expr(first)
         init_list: list[ast.expr] | None = None
         if len(value.args) >= 2:
             second = value.args[1]
@@ -439,14 +470,14 @@ class Transpiler:
                 raise SyntaxError(f"{fname} second argument must be a list literal")
         return elem_ty, size_expr, init_list
 
-    @staticmethod
-    def _emit_expr_static(node: ast.expr) -> str:
-        """Best-effort emit for a constant-like expression usable in an array size."""
+    def _emit_size_expr(self, node: ast.expr) -> str:
+        """Emit an expression usable as a C array size. Inlines module-level int constants."""
         if isinstance(node, ast.Constant) and isinstance(node.value, int):
             return str(node.value)
         if isinstance(node, ast.Name):
+            if node.id in self.inline_consts:
+                return str(self.inline_consts[node.id])
             return node.id
-        # For more complex sizes, fall through to ast.unparse.
         return ast.unparse(node)
 
     # ──────────────────────────────────────────────────────────────────
@@ -530,6 +561,11 @@ class Transpiler:
         if isinstance(node, ast.Name):
             if node.id in scope.ref_params:
                 return f"(*{node.id})"
+            if node.id in self.inline_consts:
+                v = self.inline_consts[node.id]
+                if isinstance(v, bool):
+                    return "true" if v else "false"
+                return str(v)
             return node.id
         if isinstance(node, ast.Attribute):
             return self._emit_attribute(node, scope)
