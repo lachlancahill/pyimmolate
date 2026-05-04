@@ -30,5 +30,4 @@ It will:
 ## Task
 
 * Read some of the [example_filters](example_filters) which come with Immolate to understand how filtering is done.
-* Assess feasibility of my requirements, and consider potential approaches.
-* Create a very high level project plan, with approx 5 key steps that I will need to achieve this.
+* Read [DESIGN.md](DESIGN.md), ask any clarifying questions you have, then implement this solution completely. 
