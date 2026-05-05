@@ -29,6 +29,7 @@ class jokerstickers:
 
 class jokerdata:
     joker: int
+    rarity: int
     edition: int
     stickers: jokerstickers
 

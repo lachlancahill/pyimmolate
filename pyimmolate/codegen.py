@@ -75,6 +75,7 @@ _STRUCT_FIELDS: dict[str, dict[str, tuple[str, str]]] = {
     },
     "jokerdata": {
         "joker": ("joker", "item"),
+        "rarity": ("_rarity", "rarity"),
         "edition": ("edition", "item"),
         "stickers": ("stickers", "jokerstickers"),
     },

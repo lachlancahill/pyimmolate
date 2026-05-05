@@ -422,6 +422,7 @@ def write_api_module(funcs: dict[str, dict]) -> None:
         f'    rental: bool\n\n'
         f'class jokerdata:\n'
         f'    joker: int\n'
+        f'    rarity: int\n'
         f'    edition: int\n'
         f'    stickers: jokerstickers\n\n'
         f'class pack:\n'
