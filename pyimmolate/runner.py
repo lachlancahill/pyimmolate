@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from collections import deque
 from pathlib import Path
 from typing import Iterator
 
@@ -132,9 +133,19 @@ def run_raw(
     )
 
     assert proc.stdout is not None
+    # Keep a rolling tail of recent output so a non-zero exit can surface
+    # Immolate's actual error message (compile errors, OpenCL diagnostics,
+    # etc.) rather than just the bare status code.
+    tail: deque[str] = deque(maxlen=200)
     for line in proc.stdout:
-        yield line.rstrip("\n")
+        line = line.rstrip("\n")
+        tail.append(line)
+        yield line
     rc = proc.wait()
     _log(f"immolate exited with status {rc}")
     if rc != 0:
-        raise RuntimeError(f"immolate exited with status {rc}")
+        detail = "\n".join(tail) if tail else "(no output captured)"
+        raise RuntimeError(
+            f"immolate exited with status {rc}. Last {len(tail)} line(s) of "
+            f"output:\n{detail}"
+        )
