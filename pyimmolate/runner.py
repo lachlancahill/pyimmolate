@@ -184,7 +184,7 @@ def run_parallel(
     Yields `(seed, score)` tuples interleaved from all workers, in arrival
     order — not seed order.
     """
-    for line in run_raw_parallel(
+    for _idx, line in _iter_parallel(
         filter_fn,
         num_workers=num_workers,
         devices=devices,
@@ -215,6 +215,31 @@ def run_raw_parallel(
     Lines are prefixed with `[wN] ` (worker index) so you can disentangle
     interleaved banners and diagnostics.
     """
+    for idx, line in _iter_parallel(
+        filter_fn,
+        num_workers=num_workers,
+        devices=devices,
+        start_seed=start_seed,
+        num_seeds=num_seeds,
+        cutoff=cutoff,
+        thread_groups=thread_groups,
+        platform=platform,
+    ):
+        yield f"[w{idx}] {line}"
+
+
+def _iter_parallel(
+    filter_fn: FilterFunction,
+    *,
+    num_workers: int,
+    devices: list[int] | None,
+    start_seed: str | None,
+    num_seeds: int | None,
+    cutoff: int | None,
+    thread_groups: int | None,
+    platform: int | None,
+) -> Iterator[tuple[int, str]]:
+    """Internal: orchestrate workers and yield `(worker_idx, raw_line)`."""
     if not isinstance(filter_fn, FilterFunction):
         raise TypeError(
             "run_parallel() expects a @filter-decorated function; got "
@@ -326,7 +351,7 @@ def run_raw_parallel(
                 finished += 1
                 _log(f"worker {idx} exited with status {rcs[idx]}")
                 continue
-            yield f"[w{idx}] {line}"
+            yield idx, line
 
         failures = [i for i, rc in enumerate(rcs) if rc != 0]
         if failures:
