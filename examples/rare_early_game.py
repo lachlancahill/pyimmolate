@@ -13,7 +13,7 @@ from pyimmolate.item_types import ItemType_Joker
 from pyimmolate.rarities import Rarity_Rare
 
 SHOP_ITEMS_TO_CHECK = 2 * 4  # initial shop + x rerolls
-ANTES_TO_CHECK = 8
+ANTES_TO_CHECK = 4
 
 
 @filter
@@ -37,7 +37,7 @@ def rare_early_game():
 
 if __name__ == "__main__":
     best = 0
-    for seed, score in run_parallel(rare_early_game, cutoff=1):
+    for seed, score in run_parallel(rare_early_game, cutoff=1, start_seed="55555555", thread_groups=64):
         if score >= best:
             best = score
             print(f"{seed}\t{score}")
