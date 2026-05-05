@@ -150,17 +150,22 @@ class Transpiler:
             return {}
         source = open(src_file).read()
         tree = ast.parse(source)
-        out: dict[str, int | bool] = {}
+        # Identify module-level names whose RHS we want to inline. We accept
+        # any assignment regardless of RHS shape (bare literal, BinOp like
+        # `2 * 4`, etc.) and read the *evaluated* value from the live module.
+        # This avoids re-implementing constant folding here.
+        candidates: set[str] = set()
         for node in tree.body:
             if not isinstance(node, ast.Assign):
                 continue
             if not (len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)):
                 continue
-            if not isinstance(node.value, ast.Constant):
-                continue
-            v = node.value.value
-            if isinstance(v, (int, bool)):
-                out[node.targets[0].id] = v
+            candidates.add(node.targets[0].id)
+        out: dict[str, int | bool] = {}
+        for name in candidates:
+            v = getattr(mod, name, None)
+            if isinstance(v, bool) or isinstance(v, int):
+                out[name] = v
         return out
 
     # ──────────────────────────────────────────────────────────────────
