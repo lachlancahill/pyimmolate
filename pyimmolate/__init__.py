@@ -19,13 +19,15 @@ from pyimmolate._core import (
     ref,
 )
 from pyimmolate._inst import inst
-from pyimmolate.runner import run, run_raw
+from pyimmolate.runner import run, run_parallel, run_raw, run_raw_parallel
 
 __all__ = [
     "filter",
     "helper",
     "run",
     "run_raw",
+    "run_parallel",
+    "run_raw_parallel",
     "item_array",
     "int_array",
     "inst",

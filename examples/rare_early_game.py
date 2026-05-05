@@ -7,12 +7,12 @@ non-Rare jokers contribute 0.
 The Python side tracks the running leader and prints any seed whose score
 matches or beats it, like erratic_flush_five does.
 """
-from pyimmolate import filter, run
+from pyimmolate import filter, run_parallel
 from pyimmolate.api import init_locks, next_shop_item
 from pyimmolate.item_types import ItemType_Joker
 from pyimmolate.rarities import Rarity_Rare
 
-SHOP_ITEMS_TO_CHECK = 2 * 5  # initial shop + x rerolls
+SHOP_ITEMS_TO_CHECK = 2 * 4  # initial shop + x rerolls
 ANTES_TO_CHECK = 8
 
 
@@ -37,7 +37,7 @@ def rare_early_game():
 
 if __name__ == "__main__":
     best = 0
-    for seed, score in run(rare_early_game, cutoff=1):
+    for seed, score in run_parallel(rare_early_game, cutoff=1):
         if score >= best:
             best = score
             print(f"{seed}\t{score}")

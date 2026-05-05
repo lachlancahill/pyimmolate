@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import os
+import queue
 import re
 import subprocess
 import sys
+import threading
 from collections import deque
 from pathlib import Path
 from typing import Iterator
@@ -16,6 +19,7 @@ def _log(msg: str) -> None:
 
 from pyimmolate import constants
 from pyimmolate._core import FilterFunction
+from pyimmolate._seeds import TOTAL_SEEDS, advance_seed
 from pyimmolate.codegen import generate_cl
 from pyimmolate.downloader import install_path
 
@@ -149,3 +153,194 @@ def run_raw(
             f"immolate exited with status {rc}. Last {len(tail)} line(s) of "
             f"output:\n{detail}"
         )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Parallel execution across multiple GPUs
+# ──────────────────────────────────────────────────────────────────────
+
+
+def run_parallel(
+    filter_fn: FilterFunction,
+    *,
+    num_workers: int = 2,
+    devices: list[int] | None = None,
+    start_seed: str | None = None,
+    num_seeds: int | None = None,
+    cutoff: int | None = None,
+    thread_groups: int | None = None,
+    platform: int | None = None,
+) -> Iterator[tuple[str, int]]:
+    """Run `filter_fn` across `num_workers` Immolate subprocesses in parallel.
+
+    Each worker is pinned to one GPU via `CUDA_VISIBLE_DEVICES` (NVIDIA's
+    OpenCL ICD respects this) and given a disjoint slice of the seed range,
+    so the union of work matches a single full run with no overlap.
+
+    `devices` selects which physical GPU each worker uses; defaults to
+    `[0, 1, ..., num_workers-1]`. The `device` flag is then `0` inside each
+    worker's masked process.
+
+    Yields `(seed, score)` tuples interleaved from all workers, in arrival
+    order — not seed order.
+    """
+    for line in run_raw_parallel(
+        filter_fn,
+        num_workers=num_workers,
+        devices=devices,
+        start_seed=start_seed,
+        num_seeds=num_seeds,
+        cutoff=cutoff,
+        thread_groups=thread_groups,
+        platform=platform,
+    ):
+        m = _RESULT_RE.match(line)
+        if m:
+            yield m.group(1), int(m.group(2))
+
+
+def run_raw_parallel(
+    filter_fn: FilterFunction,
+    *,
+    num_workers: int = 2,
+    devices: list[int] | None = None,
+    start_seed: str | None = None,
+    num_seeds: int | None = None,
+    cutoff: int | None = None,
+    thread_groups: int | None = None,
+    platform: int | None = None,
+) -> Iterator[str]:
+    """Like `run_parallel()` but yields every line of every worker's output.
+
+    Lines are prefixed with `[wN] ` (worker index) so you can disentangle
+    interleaved banners and diagnostics.
+    """
+    if not isinstance(filter_fn, FilterFunction):
+        raise TypeError(
+            "run_parallel() expects a @filter-decorated function; got "
+            f"{type(filter_fn).__name__}"
+        )
+    if num_workers < 1:
+        raise ValueError(f"num_workers must be >= 1, got {num_workers}")
+    if devices is None:
+        devices = list(range(num_workers))
+    elif len(devices) != num_workers:
+        raise ValueError(
+            f"devices length ({len(devices)}) must equal num_workers ({num_workers})"
+        )
+
+    _log(f"ensuring Immolate {constants.IMMOLATE_VERSION} is installed…")
+    install = install_path()
+    name, cl_source = generate_cl(filter_fn)
+    filter_name = constants.GENERATED_FILTER_PREFIX + name
+    filters_dir = install / "filters"
+    filters_dir.mkdir(parents=True, exist_ok=True)
+    cl_path = filters_dir / f"{filter_name}.cl"
+    cl_path.write_text(cl_source)
+    _log(f"wrote {cl_path}")
+
+    binary = install / constants.BINARY_NAME
+    if not binary.exists():
+        raise RuntimeError(f"Immolate binary not found at {binary}")
+
+    # Resolve effective seed range, then split it across workers.
+    base_start = start_seed if start_seed is not None else constants.DEFAULT_START_SEED
+    total_n = num_seeds if num_seeds is not None else constants.DEFAULT_NUM_SEEDS
+    if total_n is None:
+        total_n = TOTAL_SEEDS
+    chunk = total_n // num_workers
+    remainder = total_n - chunk * num_workers
+
+    # Per-worker (start_seed, num_seeds) — last worker absorbs remainder.
+    plans: list[tuple[str | None, int]] = []
+    offset = 0
+    for w in range(num_workers):
+        n_w = chunk + (remainder if w == num_workers - 1 else 0)
+        s_w = advance_seed(base_start, offset) if offset > 0 else base_start
+        plans.append((s_w, n_w))
+        offset += chunk
+
+    c_val = cutoff if cutoff is not None else constants.DEFAULT_CUTOFF
+    g_val = thread_groups if thread_groups is not None else constants.DEFAULT_THREAD_GROUPS
+    p_val = platform if platform is not None else constants.DEFAULT_PLATFORM
+
+    # `(line, worker_idx)` payload; `None` line marks a worker exiting.
+    q: queue.Queue[tuple[str | None, int]] = queue.Queue()
+    procs: list[subprocess.Popen[str]] = []
+    tails: list[deque[str]] = [deque(maxlen=200) for _ in range(num_workers)]
+    rcs: list[int | None] = [None] * num_workers
+
+    def _reader(idx: int, proc: subprocess.Popen[str]) -> None:
+        assert proc.stdout is not None
+        try:
+            for line in proc.stdout:
+                line = line.rstrip("\n")
+                tails[idx].append(line)
+                q.put((line, idx))
+        finally:
+            rcs[idx] = proc.wait()
+            q.put((None, idx))
+
+    threads: list[threading.Thread] = []
+    try:
+        for idx, (s_w, n_w) in enumerate(plans):
+            cmd: list[str] = [str(binary), "-f", filter_name]
+            if s_w is not None:
+                cmd.extend(["-s", str(s_w)])
+            cmd.extend(["-n", str(n_w)])
+            if c_val is not None:
+                cmd.extend(["-c", str(c_val)])
+            if g_val is not None:
+                cmd.extend(["-g", str(g_val)])
+            if p_val is not None:
+                cmd.extend(["-p", str(p_val)])
+            # Pin to a single GPU via CUDA_VISIBLE_DEVICES; with only one
+            # visible device, `-d 0` always refers to that GPU regardless of
+            # its physical index.
+            cmd.extend(["-d", "0"])
+            env = os.environ.copy()
+            env["CUDA_VISIBLE_DEVICES"] = str(devices[idx])
+
+            _log(
+                f"worker {idx}: GPU {devices[idx]}, "
+                f"start={s_w if s_w is not None else '(default)'}, n={n_w}"
+            )
+            proc = subprocess.Popen(
+                cmd,
+                cwd=install,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                env=env,
+            )
+            procs.append(proc)
+            t = threading.Thread(target=_reader, args=(idx, proc), daemon=True)
+            t.start()
+            threads.append(t)
+
+        finished = 0
+        while finished < num_workers:
+            line, idx = q.get()
+            if line is None:
+                finished += 1
+                _log(f"worker {idx} exited with status {rcs[idx]}")
+                continue
+            yield f"[w{idx}] {line}"
+
+        failures = [i for i, rc in enumerate(rcs) if rc != 0]
+        if failures:
+            details = []
+            for i in failures:
+                tail_str = "\n".join(tails[i]) if tails[i] else "(no output)"
+                details.append(
+                    f"worker {i} (GPU {devices[i]}) exited with status {rcs[i]}.\n"
+                    f"Last {len(tails[i])} line(s):\n{tail_str}"
+                )
+            raise RuntimeError("\n\n".join(details))
+    finally:
+        for proc in procs:
+            if proc.poll() is None:
+                proc.terminate()
+        for t in threads:
+            t.join(timeout=2.0)
