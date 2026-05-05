@@ -1,8 +1,8 @@
-"""Searches for seeds where every joker in the early shops is Rare.
+"""Searches for seeds with the most Rare jokers in early shops.
 
-The filter scores each seed by *how many* consecutive antes (starting at 1)
-have every joker in their first SHOP_ITEMS_TO_CHECK shop slots be Rare.
-A joker that isn't Rare ends the streak; non-joker shop slots are ignored.
+Score = total number of Rare jokers across the first SHOP_ITEMS_TO_CHECK
+shop slots in each of antes 1..ANTES_TO_CHECK. Non-joker slots and
+non-Rare jokers contribute 0.
 
 The Python side tracks the running leader and prints any seed whose score
 matches or beats it, like erratic_flush_five does.
@@ -27,10 +27,9 @@ def rare_early_game():
         while i < SHOP_ITEMS_TO_CHECK:
             item_selected = next_shop_item(ante)
             if item_selected.type == ItemType_Joker:
-                if item_selected.joker.rarity != Rarity_Rare:
-                    return score
+                if item_selected.joker.rarity == Rarity_Rare:
+                    score += 1
             i += 1
-        score += 1
         ante += 1
 
     return score
