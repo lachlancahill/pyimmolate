@@ -37,7 +37,7 @@ def rare_early_game():
 
 if __name__ == "__main__":
     best = 0
-    for seed, score in run_parallel(rare_early_game, cutoff=1, start_seed="55555555", thread_groups=64):
+    for seed, score in run_parallel(rare_early_game, cutoff=1, start_seed="5Y811111", thread_groups=64):
         if score >= best:
             best = score
             print(f"{seed}\t{score}")
