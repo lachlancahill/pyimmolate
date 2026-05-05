@@ -365,13 +365,18 @@ _C_TO_PY = {
     "ntype": "int",
     "rarity": "int",
     "itemtype": "int",
-    "pack": "object",
-    "shopitem": "object",
-    "card": "object",
-    "jokerdata": "object",
+    "pack": "pack",
+    "shopitem": "shopitem",
+    "card": "card",
+    "jokerdata": "jokerdata",
     "instance*": "object",
     "instance": "object",
 }
+
+# Names of struct stub classes emitted into api.py — used to rename function
+# parameters that would otherwise shadow them (e.g. `pack_info(pack)` ->
+# `pack_info(pack_)`).
+_STRUCT_CLASSES = {"pack", "shopitem", "card", "jokerdata", "jokerstickers"}
 
 
 def _py_type(c_type: str) -> str:
@@ -406,7 +411,32 @@ def write_api_module(funcs: dict[str, dict]) -> None:
         f'            "it can only be called from inside an @filter or @helper body."\n'
         f'        )\n'
         f'    f.__name__ = name\n'
-        f'    return f\n\n'
+        f'    return f\n\n\n'
+        f'# Struct stubs — mirror the C structs the transpiler knows about\n'
+        f'# (see `_STRUCT_FIELDS` in codegen.py). They exist purely so IDEs can resolve\n'
+        f'# attribute access like `next_shop_item(ante).value`. These classes are never\n'
+        f'# instantiated at runtime; the transpiler emits the C field access directly.\n'
+        f'class jokerstickers:\n'
+        f'    eternal: bool\n'
+        f'    perishable: bool\n'
+        f'    rental: bool\n\n'
+        f'class jokerdata:\n'
+        f'    joker: int\n'
+        f'    edition: int\n'
+        f'    stickers: jokerstickers\n\n'
+        f'class pack:\n'
+        f'    type: int\n'
+        f'    size: int\n'
+        f'    choices: int\n\n'
+        f'class shopitem:\n'
+        f'    type: int\n'
+        f'    value: int\n'
+        f'    joker: jokerdata\n\n'
+        f'class card:\n'
+        f'    base: int\n'
+        f'    edition: int\n'
+        f'    enhancement: int\n'
+        f'    seal: int\n\n\n'
         f'__all__ = [\n'
     )
     names = sorted(funcs)
@@ -419,7 +449,7 @@ def write_api_module(funcs: dict[str, dict]) -> None:
         for ty, pname in sig["params"]:
             if ty == "instance*":
                 continue  # auto-injected
-            if pname in {"in", "is", "from", "class"}:
+            if pname in {"in", "is", "from", "class"} or pname in _STRUCT_CLASSES:
                 pname = pname + "_"
             py_params.append(f"{pname}: {_py_type(ty)}")
         py_ret = _py_type(sig["returns"])
