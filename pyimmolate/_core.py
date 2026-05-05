@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, overload
 
 
 @dataclass
@@ -52,11 +52,15 @@ def _capture(fn: Callable[..., Any]) -> tuple[str, str]:
     return fn.__name__, inspect.cleandoc(source) if False else source
 
 
+@overload
+def filter(fn: Callable[..., Any], /) -> FilterFunction: ...
+@overload
+def filter(*, raw_helpers: str = ...) -> Callable[[Callable[..., Any]], FilterFunction]: ...
 def filter(  # noqa: A001 — intentional name shadowing of builtin; documented public API
     fn: Callable[..., Any] | None = None,
     *,
     raw_helpers: str = "",
-) -> Any:
+) -> FilterFunction | Callable[[Callable[..., Any]], FilterFunction]:
     """Mark a function as a seed filter.
 
     Usage:
